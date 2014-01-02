@@ -9,7 +9,7 @@
 trace_init_ebp:
     pushl   %ebp
     movl    %esp,%ebp
-    movl    %ebp,%eax
+    movl    (%ebp),%eax
     movl    %ebp,%esp
     popl    %ebp
     ret

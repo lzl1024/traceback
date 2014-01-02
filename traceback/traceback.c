@@ -30,9 +30,9 @@ void traceback(FILE *fp);
 /**
  * @brief  Get the %ebp when entering traceback function
  *
- * @return Void.  
+ * @return ebp on the current stack.  
  */
-void trace_init_ebp();
+int* trace_init_ebp();
 
 /**
  * @brief  Get the index from the functions array givin the return
@@ -105,15 +105,7 @@ int is_string_print(char *arg_val, int *length);
 
 void traceback(FILE *fp)
 {
-    /* the following just makes a sample access to "functions" array. 
-     * note if "functions" is not referenced somewhere outside the 
-     * file that it's declared in, symtabgen won't be able to find
-     * the symbol. So be sure to always do something with functions */
-
-    /* remove this line once you've got real code here */
-    printf("first function in table name: %s\n", functions[0].name);
-
-    int* ebp, old_ebp;
+    int *ebp, *old_ebp;
     int return_address = -1;
     int index = -1;
 
@@ -131,8 +123,8 @@ void traceback(FILE *fp)
         if (index < 0) {
             fprintf(fp, "Function 0x%x(...), in\n", return_address);
         } else {
-            curr_function = fucntions[index];
-            fprintf(fp, "Function %s(", func.name);
+            curr_function = functions[index];
+            fprintf(fp, "Function %s(", curr_function.name);
             print_arguments(fp, curr_function, old_ebp);
             fprintf(fp, "), in\n");
         }
@@ -166,32 +158,32 @@ int is_main(functsym_t function) {
 
 void print_arguments(FILE *fp, functsym_t function, int* ebp) {
     int index = -1;
-    void *arg_val;
+    int *arg_val;
     int int_size = sizeof(int);
     argsym_t arg;
 
     /* go through the arge list and print them */
-    while (++index < ARGS_MAX_NUM && strlen((arg = function.args[index])
-        .name) != 0) {
+    while (++index < ARGS_MAX_NUM && strlen(function.args[index].name) != 0) {
+        arg = function.args[index];
         /* print ',' first when there are more than one argument */
         if (index > 0) {
             fprintf(fp, ", ");
         }
 
         /* get the real value's address of the argument */
-        arg_val = (void *)(ebp + arg.offset / int_size);
+        arg_val = (int*)(ebp + arg.offset / int_size);
         
         /* print the argument according to its type */
         switch (arg.type) {
         case TYPE_CHAR:
-            if (isprint(c)) {
+            if (isprint(*(char*)arg_val)) {
                 fprintf(fp, "char %s='%c'", arg.name, *(char*)arg_val);
             } else {
-                fprintf(fp, "char %s='\\%o'", arg.name *(char*)arg_val);
+                fprintf(fp, "char %s='\\%o'", arg.name, *(char*)arg_val);
             }
             break;
         case TYPE_INT:
-            fprintf(fp, "int %s=%d", arg.name, *(int*)arg_val);
+            fprintf(fp, "int %s=%d", arg.name, *arg_val);
             break;
         case TYPE_FLOAT:
             fprintf(fp, "float %s=%f", arg.name, *(float*)arg_val);
@@ -211,7 +203,7 @@ void print_arguments(FILE *fp, functsym_t function, int* ebp) {
             fprintf(fp, "void *%s=0v%x", arg.name, *arg_val);
             break;
         default:
-            fprintf(fp, "UNKNOWN %s=%#x", arg.name, arg_val);
+            fprintf(fp, "UNKNOWN %s=%#x", arg.name, (int)arg_val);
         }
     }
 
@@ -229,18 +221,18 @@ void print_string(FILE *fp, char *arg_val) {
     /* check the string is printable */
     if (is_string_print(arg_val, &length)) {
         fprintf(fp, "\"");
-        for (i = 0; i < len && i < MAX_STRING_LEN; i++) {
+        for (i = 0; i < length && i < MAX_STRING_LEN; i++) {
             fprintf(fp, "%c", arg_val[i]);
         }
 
         /* print '...' if the length is too large */
-        if (i >= MAX_STRING_LEN && i < len) {
+        if (i >= MAX_STRING_LEN && i < length) {
             fprintf(fp, "...");
         }
 
         fprintf(fp, "\"");
     } else {
-        fprintf(fp, "%#x", arg_val);
+        fprintf(fp, "%#x", (int)arg_val);
     }
 }
 
@@ -250,7 +242,7 @@ void print_string_array(FILE *fp, char **arg_val) {
     /* if NULL, the array is not printable */
     if (!arg_val) {
         fprintf(fp, "0x0");
-        return
+        return;
     }
 
     fprintf(fp, "{");
@@ -260,7 +252,7 @@ void print_string_array(FILE *fp, char **arg_val) {
             fprintf(fp, ", ");
         }
 
-        print_string(fp, arg_val[i])
+        print_string(fp, arg_val[i]);
         i++;
     }
 
