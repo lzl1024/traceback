@@ -4,20 +4,290 @@
  *  This file contains the traceback function for the traceback library
  *
  *  @author Harry Q. Bovik (hqbovik)
- *  @bug Unimplemented
+ *  @bug No known bugs
  */
-
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
 #include "traceback_internal.h"
+
+/* maximum number of char to print */
+#define MAX_STRING_LEN 25
+/* muximum number of element to print */
+#define MAX_ARRAY_LEN 3
+
+/**
+ * @brief  Print the trace back information of the function.
+ *         This is the meat part of this assignment.
+ *
+ * @param  fp The file stream to which the stack trace should
+ *         be printed
+ * @return Void.  
+ */
+void traceback(FILE *fp);
+
+/**
+ * @brief  Get the %ebp when entering traceback function
+ *
+ * @return Void.  
+ */
+void trace_init_ebp();
+
+/**
+ * @brief  Get the index from the functions array givin the return
+ *         address of the function
+ * @param  reutrn_address The return address of the function
+ * @return The index in the functions list  
+ */
+int get_index(int return_address);
+
+/**
+ * @brief  Get the index from the functions array givin the return
+ *         address of the function
+ * 
+ * Go through the argument list and print them according to their type 
+ *
+ * @param  fp The file stream to which the stack trace should
+ *         be printed
+ * @param  function The function to print arguments
+ * @param  ebp The basic stack pointer of the function 
+ * @return Void.
+ */
+void print_arguments(FILE *fp, functsym_t function, int* ebp);
+
+/**
+ * @brief  Get the index from the functions array givin the return
+ *         address of the function
+ *
+ * @param  function The function to judge whether it is the main
+ * @return 1 when it is the main funciton, 0 otherwise. 
+ */
+int is_main(functsym_t function);
+
+/**
+ * @brief  Print the argument whose type is char*
+ *
+ * Safely print the string. If it is not printable, print its address
+ * If the length of the string is too large, print '...'
+ *
+ * @param  fp The file stream to which the stack trace should
+ *         be printed
+ * @param  arg_val The value of the argument 
+ * @return Void. 
+ */
+void print_string(FILE *fp, char *arg_val);
+
+/**
+ * @brief  Print the argument whose type is char**
+ * 
+ * Safely print the string array. If it is null, print its address
+ * If the length of the array is too large, print '...'
+ *
+ * @param  fp The file stream to which the stack trace should
+ *         be printed
+ * @param  arg_val The value of the argument 
+ * @return Void. 
+ */
+void print_string_array(FILE *fp, char **arg_val);
+
+/**
+ * @brief  Check if the string is printable
+ *
+ * Check each of the char in the string is printable
+ * and it is printable only if all chars are printable  
+ *         
+ * @param  arg_val The address of the string to print
+ * @param  length The length of the string to be got
+ * @return 1 if the string is printable, 0 otherwise. 
+ */
+int is_string_print(char *arg_val, int *length);
 
 void traceback(FILE *fp)
 {
-	/* the following just makes a sample access to "functions" array. 
-	 * note if "functions" is not referenced somewhere outside the 
-	 * file that it's declared in, symtabgen won't be able to find
-	 * the symbol. So be sure to always do something with functions */
+    /* the following just makes a sample access to "functions" array. 
+     * note if "functions" is not referenced somewhere outside the 
+     * file that it's declared in, symtabgen won't be able to find
+     * the symbol. So be sure to always do something with functions */
 
-	/* remove this line once you've got real code here */
-	printf("first function in table name: %s\n", functions[0].name);
+    /* remove this line once you've got real code here */
+    printf("first function in table name: %s\n", functions[0].name);
+
+    int* ebp, old_ebp;
+    int return_address = -1;
+    int index = -1;
+
+    functsym_t curr_function;
+
+    ebp = (int *)trace_init_ebp();
+    /* trace back until meet the main function */
+    while (1) {
+        /* extract basic information, return address stores
+           just on the top of the ebp pointer */
+        old_ebp = (int *)(*ebp);
+        return_address = *(ebp + 1);
+
+        index = get_index(return_address);
+        if (index < 0) {
+            fprintf(fp, "Function 0x%x(...), in\n", return_address);
+        } else {
+            curr_function = fucntions[index];
+            fprintf(fp, "Function %s(", func.name);
+            print_arguments(fp, curr_function, old_ebp);
+            fprintf(fp, "), in\n");
+        }
+
+        /* judge if the current function is the main function */
+        if (is_main(curr_function)) {
+            break;
+        }
+
+        /* continue to trace the next function */
+        ebp = old_ebp;
+    }
 }
 
+int get_index(int return_address) {
+    int index = -1;
 
+    /* go through the function list and find the function list index */
+    while (++index < FUNCTS_MAX_NUM && strlen(functions[index].name) != 0) {
+        if ((int)functions[index].addr > return_address) {
+            break;
+        }
+    }
+
+    return index - 1;
+}
+
+int is_main(functsym_t function) {
+    return !strcmp(function.name, "main");
+}
+
+void print_arguments(FILE *fp, functsym_t function, int* ebp) {
+    int index = -1;
+    void *arg_val;
+    int int_size = sizeof(int);
+    argsym_t arg;
+
+    /* go through the arge list and print them */
+    while (++index < ARGS_MAX_NUM && strlen((arg = function.args[index])
+        .name) != 0) {
+        /* print ',' first when there are more than one argument */
+        if (index > 0) {
+            fprintf(fp, ", ");
+        }
+
+        /* get the real value's address of the argument */
+        arg_val = (void *)(ebp + arg.offset / int_size);
+        
+        /* print the argument according to its type */
+        switch (arg.type) {
+        case TYPE_CHAR:
+            if (isprint(c)) {
+                fprintf(fp, "char %s='%c'", arg.name, *(char*)arg_val);
+            } else {
+                fprintf(fp, "char %s='\\%o'", arg.name *(char*)arg_val);
+            }
+            break;
+        case TYPE_INT:
+            fprintf(fp, "int %s=%d", arg.name, *(int*)arg_val);
+            break;
+        case TYPE_FLOAT:
+            fprintf(fp, "float %s=%f", arg.name, *(float*)arg_val);
+            break;
+        case TYPE_DOUBLE:
+            fprintf(fp, "double %s=%lf", arg.name, *(double*)arg_val);
+            break;
+        case TYPE_STRING:
+            fprintf(fp, "char *%s=", arg.name);
+            print_string(fp, (char*)*arg_val);
+            break;
+        case TYPE_STRING_ARRAY:
+            fprintf(fp, "char **%s=", arg.name);
+            print_string_array(fp, (char**)*arg_val);
+            break;
+        case TYPE_VOIDSTAR:
+            fprintf(fp, "void *%s=0v%x", arg.name, *arg_val);
+            break;
+        default:
+            fprintf(fp, "UNKNOWN %s=%#x", arg.name, arg_val);
+        }
+    }
+
+    /* no argument, print 'void' */
+    if (index == 0) {
+        fprintf(fp, "void");
+        return;
+    }
+
+}
+
+void print_string(FILE *fp, char *arg_val) {
+    int length = 0, i = 0;
+
+    /* check the string is printable */
+    if (is_string_print(arg_val, &length)) {
+        fprintf(fp, "\"");
+        for (i = 0; i < len && i < MAX_STRING_LEN; i++) {
+            fprintf(fp, "%c", arg_val[i]);
+        }
+
+        /* print '...' if the length is too large */
+        if (i >= MAX_STRING_LEN && i < len) {
+            fprintf(fp, "...");
+        }
+
+        fprintf(fp, "\"");
+    } else {
+        fprintf(fp, "%#x", arg_val);
+    }
+}
+
+void print_string_array(FILE *fp, char **arg_val) {
+    int i = 0;
+
+    /* if NULL, the array is not printable */
+    if (!arg_val) {
+        fprintf(fp, "0x0");
+        return
+    }
+
+    fprintf(fp, "{");
+    while(arg_val[i] && i < MAX_ARRAY_LEN) {
+        /* print ',' when it is not the first element*/
+        if (i > 0) {
+            fprintf(fp, ", ");
+        }
+
+        print_string(fp, arg_val[i])
+        i++;
+    }
+
+    /* if too much string in the array, print '...' */
+    if (arg_val[i] && i >= MAX_ARRAY_LEN) {
+        fprintf(fp, "...");
+    }
+    fprintf(fp, "}");
+}
+
+int is_string_print(char *arg_val, int *length) {
+    int len = 0;
+
+    /* if string is null, it is not printable */
+    if (!arg_val) {
+        return 0;
+    }
+
+    /* go through the string to see whether it is printable */
+    while(arg_val[len] != '\0') {
+        /* one char is not printable, return 0 */
+        if (!isprint(arg_val[len])) {
+            return 0;
+        }
+        len++;
+    }
+
+    *length = len;
+    return 1;
+}
