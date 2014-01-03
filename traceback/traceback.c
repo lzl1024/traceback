@@ -10,12 +10,21 @@
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
+#include <errno.h>
+#include <unistd.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
 #include "traceback_internal.h"
 
 /* maximum number of char to print */
 #define MAX_STRING_LEN 25
 /* muximum number of element to print */
 #define MAX_ARRAY_LEN 3
+
+
+const char *filepath = "a.out";
 
 /**
  * @brief  Print the trace back information of the function.
@@ -102,6 +111,22 @@ void print_string_array(FILE *fp, char **arg_val);
  * @return 1 if the string is printable, 0 otherwise. 
  */
 int is_string_print(char *arg_val, int *length);
+
+/**
+ * @brief  Check if the address is vaild and readable
+ *
+ * Try to write the content of this address into a file via write() system
+ * call and see whether an error will be thrown out. I don't use signal 
+ * handler because it may retrict user to define their own signal handler
+ * otherwise, traceback handler will be masked. Don't use mmap() becuase
+ * it is too costly to just validate one address. The limitation of using
+ * write() function will be increase the overhead of file open and close.
+ * 
+ * @param  fd The file descriptor used to be written into
+ * @param  address The address to be valiated
+ * @return 1 if the address is valid, 0 otherwise. 
+ */
+int isvalid(int fd, char *address);
 
 void traceback(FILE *fp)
 {
@@ -258,28 +283,54 @@ void print_string_array(FILE *fp, char **arg_val) {
 
     /* if too much string in the array, print '...' */
     if (arg_val[i] && i >= MAX_ARRAY_LEN) {
-        fprintf(fp, "...");
+        fprintf(fp, ", ...");
     }
     fprintf(fp, "}");
 }
 
 int is_string_print(char *arg_val, int *length) {
-    int len = 0;
+    int len = 0, fd;
 
     /* if string is null, it is not printable */
     if (!arg_val) {
         return 0;
     }
 
+    /* open file for address validation */
+    fd = open(filepath, O_CREAT|O_WRONLY);
+    if(fd < 0) {
+        fprintf(stderr, "open random file failed");
+    }
+
     /* go through the string to see whether it is printable */
-    while(arg_val[len] != '\0') {
+    while(1) {
+        /* judge if the address is valid */
+        if (!isvalid(fd, arg_val + len)) {
+            close(fd);
+            remove(filepath);
+            return 0;
+        }
+
+        /* while loop end indicator */
+        if (arg_val[len] == '\0') {
+            break;
+        }
+
         /* one char is not printable, return 0 */
         if (!isprint(arg_val[len])) {
+            close(fd);
+            remove(filepath);
             return 0;
         }
         len++;
     }
 
     *length = len;
+    close(fd);
+    remove(filepath);
     return 1;
+}
+
+int isvalid(int fd, char *address) {
+    return write(fd, address, 1) < 0 ? 0 : 1;
 }
