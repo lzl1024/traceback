@@ -23,8 +23,10 @@
 /* muximum number of element to print */
 #define MAX_ARRAY_LEN 3
 
-
+/* temp file to write string into */
 const char *filepath = "a.out";
+/* temp file's descriptor */
+int fd;
 
 /**
  * @brief  Print the trace back information of the function.
@@ -122,11 +124,10 @@ int is_string_print(char *arg_val, int *length);
  * it is too costly to just validate one address. The limitation of using
  * write() function will be increase the overhead of file open and close.
  * 
- * @param  fd The file descriptor used to be written into
  * @param  address The address to be valiated
  * @return 1 if the address is valid, 0 otherwise. 
  */
-int isvalid(int fd, char *address);
+int isvalid(char *address);
 
 void traceback(FILE *fp)
 {
@@ -135,6 +136,12 @@ void traceback(FILE *fp)
     int index = -1;
 
     functsym_t curr_function;
+
+    /* open file for address validation */
+    fd = open(filepath, O_CREAT|O_WRONLY);
+    if(fd < 0) {
+        fprintf(stderr, "open random file failed");
+    }
 
     ebp = (int *)trace_init_ebp();
     /* trace back until meet the main function */
@@ -162,6 +169,9 @@ void traceback(FILE *fp)
         /* continue to trace the next function */
         ebp = old_ebp;
     }
+
+    close(fd);
+    remove(filepath);
 }
 
 int get_index(int return_address) {
@@ -289,25 +299,17 @@ void print_string_array(FILE *fp, char **arg_val) {
 }
 
 int is_string_print(char *arg_val, int *length) {
-    int len = 0, fd;
+    int len = 0;
 
     /* if string is null, it is not printable */
     if (!arg_val) {
         return 0;
     }
 
-    /* open file for address validation */
-    fd = open(filepath, O_CREAT|O_WRONLY);
-    if(fd < 0) {
-        fprintf(stderr, "open random file failed");
-    }
-
     /* go through the string to see whether it is printable */
     while(1) {
         /* judge if the address is valid */
-        if (!isvalid(fd, arg_val + len)) {
-            close(fd);
-            remove(filepath);
+        if (!isvalid(arg_val + len)) {
             return 0;
         }
 
@@ -318,19 +320,15 @@ int is_string_print(char *arg_val, int *length) {
 
         /* one char is not printable, return 0 */
         if (!isprint(arg_val[len])) {
-            close(fd);
-            remove(filepath);
             return 0;
         }
         len++;
     }
 
     *length = len;
-    close(fd);
-    remove(filepath);
     return 1;
 }
 
-int isvalid(int fd, char *address) {
+int isvalid(char *address) {
     return write(fd, address, 1) < 0 ? 0 : 1;
 }
