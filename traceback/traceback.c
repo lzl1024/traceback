@@ -48,14 +48,14 @@ int* trace_init_ebp();
 /**
  * @brief  Get the index from the functions array givin the return
  *         address of the function
+ *
  * @param  reutrn_address The return address of the function
  * @return The index in the functions list  
  */
 int get_index(int return_address);
 
 /**
- * @brief  Get the index from the functions array givin the return
- *         address of the function
+ * @brief  Print the arguments of the function
  * 
  * Go through the argument list and print them according to their type 
  *
