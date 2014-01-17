@@ -165,10 +165,10 @@ void traceback(FILE *fp)
             curr_function = functions[index];
             /* get suspicious exit address */
             exit_address = return_address + *(int*)(return_address + 4) + 8;
-        exit = get_index(exit_address);
+            exit = get_index(exit_address);
             /* judge if the current function is tfter he main function */
             if (is_main(index, exit)) {
-        break;
+                break;
             }
             fprintf(fp, "Function %s(", curr_function.name);
             print_arguments(fp, curr_function, old_ebp);
