@@ -68,13 +68,14 @@ int get_index(int return_address);
 void print_arguments(FILE *fp, functsym_t function, int* ebp);
 
 /**
- * @brief  Get the index from the functions array givin the return
- *         address of the function
+ * @brief  Judge the whether the current function is a main function
+ *         or should be exit according to the stack frame
  *
- * @param  function The function to judge whether it is the main
- * @return 1 when it is the main funciton, 0 otherwise. 
+ * @param  cur_index The function index to judge whether it is the main
+ * @param  exit_index The function index may be the exit function
+ * @return 1 when it is the main funciton or need to exit, 0 otherwise. 
  */
-int is_main(functsym_t function);
+int is_main(int cur_index, int exit_index);
 
 /**
  * @brief  Print the argument whose type is char*
@@ -133,7 +134,8 @@ void traceback(FILE *fp)
 {
     int *ebp, *old_ebp;
     int return_address = -1;
-    int index = -1;
+    int index = -1, exit_address = -1;
+    int exit = -1;
 
     functsym_t curr_function;
 
@@ -150,20 +152,27 @@ void traceback(FILE *fp)
            just on the top of the ebp pointer */
         old_ebp = (int *)(*ebp);
         return_address = *(ebp + 1);
+        /* if ebp >= old_ebp the stack frame must be wrong */
+        if (ebp >= old_ebp) {
+            fprintf(fp,"FATAL: Stack Wrong!\n");
+            break;
+        }   
 
         index = get_index(return_address);
         if (index < 0) {
             fprintf(fp, "Function 0x%x(...), in\n", return_address);
         } else {
             curr_function = functions[index];
+            /* get suspicious exit address */
+            exit_address = return_address + *(int*)(return_address + 4) + 8;
+        exit = get_index(exit_address);
+            /* judge if the current function is tfter he main function */
+            if (is_main(index, exit)) {
+        break;
+            }
             fprintf(fp, "Function %s(", curr_function.name);
             print_arguments(fp, curr_function, old_ebp);
             fprintf(fp, "), in\n");
-        }
-
-        /* judge if the current function is the main function */
-        if (is_main(curr_function)) {
-            break;
         }
 
         /* continue to trace the next function */
@@ -176,19 +185,22 @@ void traceback(FILE *fp)
 
 int get_index(int return_address) {
     int index = -1;
+    int find = 0;
 
     /* go through the function list and find the function list index */
     while (++index < FUNCTS_MAX_NUM && strlen(functions[index].name) != 0) {
         if ((int)functions[index].addr > return_address) {
+            find = 1;
             break;
         }
     }
 
-    return index - 1;
+    return find ? index - 1 : -1;
 }
 
-int is_main(functsym_t function) {
-    return !strcmp(function.name, "main");
+int is_main(int cur_index, int exit_index) {
+    return !strcmp(functions[exit_index].name, "exit") ||
+        !strcmp(functions[cur_index].name, "_start");
 }
 
 void print_arguments(FILE *fp, functsym_t function, int* ebp) {
