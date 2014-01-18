@@ -15,18 +15,14 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
-
+#include <signal.h>
+#include <setjmp.h>
 #include "traceback_internal.h"
 
 /* maximum number of char to print */
 #define MAX_STRING_LEN 25
 /* muximum number of element to print */
 #define MAX_ARRAY_LEN 3
-
-/* temp file to write string into */
-const char *filepath = "a.out";
-/* temp file's descriptor */
-int fd;
 
 /**
  * @brief  Print the trace back information of the function.
@@ -68,16 +64,6 @@ int get_index(int return_address);
 void print_arguments(FILE *fp, functsym_t function, int* ebp);
 
 /**
- * @brief  Judge the whether the current function is a main function
- *         or should be exit according to the stack frame
- *
- * @param  cur_index The function index to judge whether it is the main
- * @param  exit_index The function index may be the exit function
- * @return 1 when it is the main funciton or need to exit, 0 otherwise. 
- */
-int is_main(int cur_index, int exit_index);
-
-/**
  * @brief  Print the argument whose type is char*
  *
  * Safely print the string. If it is not printable, print its address
@@ -116,19 +102,29 @@ void print_string_array(FILE *fp, char **arg_val);
 int is_string_print(char *arg_val, int *length);
 
 /**
- * @brief  Check if the address is vaild and readable
+ * @brief  SIGSEGV_handler
  *
- * Try to write the content of this address into a file via write() system
- * call and see whether an error will be thrown out. I don't use signal 
- * handler because it may retrict user to define their own signal handler
- * otherwise, traceback handler will be masked. Don't use mmap() becuase
+ * Jump to the place where we have already set, so whenever we detect  
+ * jump happens from the return of the sigsetjmp() funtion, we can know 
+ * that the address is invalid. Don't use write() function because it 
+ * may not have privilige to write the file. Don't use mmap() becuase
  * it is too costly to just validate one address. The limitation of using
- * write() function will be increase the overhead of file open and close.
  * 
- * @param  address The address to be valiated
- * @return 1 if the address is valid, 0 otherwise. 
+ * @param  sig The signal invoke this function
+ * @return Void. 
  */
-int isvalid(char *address);
+void SIGSEGV_handler(int sig);
+
+/**
+ * @brief  Setup the SIGSEGV handler
+ *
+ * @param  fp The file stream to print
+ * @return Void. 
+ */
+void SIGSEGV_handler_setup(FILE *fp);
+
+/* Global variable */
+sigjmp_buf jump_to; // place to jump to when SIGSEGV happens
 
 void traceback(FILE *fp)
 {
@@ -137,26 +133,26 @@ void traceback(FILE *fp)
     int index = -1, exit_address = -1;
     int exit = -1;
 
+    SIGSEGV_handler_setup(fp);
+
     functsym_t curr_function;
 
-    /* open file for address validation */
-    fd = open(filepath, O_CREAT|O_WRONLY);
-    if(fd < 0) {
-        fprintf(stderr, "open random file failed");
-    }
-
     ebp = (int *)trace_init_ebp();
-    /* trace back until meet the main function */
+    /* trace back until meet the _start function */
     while (1) {
+        /* ebp = 0 indicates the _start function and
+            whenever address is invalid, quit */
+        if (sigsetjmp(jump_to, 1) || !ebp) break;
+
         /* extract basic information, return address stores
            just on the top of the ebp pointer */
         old_ebp = (int *)(*ebp);
         return_address = *(ebp + 1);
         /* if ebp >= old_ebp the stack frame must be wrong */
-        if (ebp >= old_ebp) {
-            fprintf(fp,"FATAL: Stack Wrong!\n");
+        if (old_ebp && ebp >= old_ebp) {
+            fprintf(fp, "FATAL: Stack Wrong!\n");
             break;
-        }   
+        }
 
         index = get_index(return_address);
         if (index < 0) {
@@ -166,10 +162,6 @@ void traceback(FILE *fp)
             /* get suspicious exit address */
             exit_address = return_address + *(int*)(return_address + 4) + 8;
             exit = get_index(exit_address);
-            /* judge if the current function is tfter he main function */
-            if (is_main(index, exit)) {
-                break;
-            }
             fprintf(fp, "Function %s(", curr_function.name);
             print_arguments(fp, curr_function, old_ebp);
             fprintf(fp, "), in\n");
@@ -178,29 +170,24 @@ void traceback(FILE *fp)
         /* continue to trace the next function */
         ebp = old_ebp;
     }
-
-    close(fd);
-    remove(filepath);
 }
 
 int get_index(int return_address) {
     int index = -1;
-    int find = 0;
 
     /* go through the function list and find the function list index */
     while (++index < FUNCTS_MAX_NUM && strlen(functions[index].name) != 0) {
         if ((int)functions[index].addr > return_address) {
-            find = 1;
             break;
         }
     }
 
-    return find ? index - 1 : -1;
-}
-
-int is_main(int cur_index, int exit_index) {
-    return !strcmp(functions[exit_index].name, "exit") ||
-        !strcmp(functions[cur_index].name, "_start");
+    /* check the return function is right */
+    if (index >= 0 && return_address - (int)functions[index - 1].addr
+        < MAX_FUNCTION_SIZE_BYTES) {
+        return index - 1;
+    }
+    return -1;
 }
 
 void print_arguments(FILE *fp, functsym_t function, int* ebp) {
@@ -279,19 +266,31 @@ void print_string(FILE *fp, char *arg_val) {
 
         fprintf(fp, "\"");
     } else {
-        fprintf(fp, "%#x", (int)arg_val);
+        fprintf(fp, "0x%x", (int)arg_val);
     }
 }
 
 void print_string_array(FILE *fp, char **arg_val) {
-    int i = 0;
-
+    int i;
+    /* if address is not valid, print the address of the array */
+    if (sigsetjmp(jump_to, 1)) {
+        fprintf(fp, "%#x", (int)arg_val);
+        return;
+    }
     /* if NULL, the array is not printable */
     if (!arg_val) {
         fprintf(fp, "0x0");
         return;
     }
+    /* check the string array is printable */
+    for (i = 0; i < MAX_ARRAY_LEN; i++) {
+        /* try the address of each string argument */
+        if (!arg_val[i]) {
+            break;
+        }
+    }
 
+    i = 0;
     fprintf(fp, "{");
     while(arg_val[i] && i < MAX_ARRAY_LEN) {
         /* print ',' when it is not the first element*/
@@ -313,18 +312,13 @@ void print_string_array(FILE *fp, char **arg_val) {
 int is_string_print(char *arg_val, int *length) {
     int len = 0;
 
-    /* if string is null, it is not printable */
-    if (!arg_val) {
+    /* judge if the address is valid */
+    if (sigsetjmp(jump_to, 1) || !arg_val) {
         return 0;
     }
 
     /* go through the string to see whether it is printable */
     while(1) {
-        /* judge if the address is valid */
-        if (!isvalid(arg_val + len)) {
-            return 0;
-        }
-
         /* while loop end indicator */
         if (arg_val[len] == '\0') {
             break;
@@ -341,6 +335,27 @@ int is_string_print(char *arg_val, int *length) {
     return 1;
 }
 
-int isvalid(char *address) {
-    return write(fd, address, 1) < 0 ? 0 : 1;
+void SIGSEGV_handler_setup(FILE* fp) {
+    sigset_t signal_set;
+    struct sigaction sa;
+
+    /* Set up the signal handler */
+    sigemptyset(&sa.sa_mask);
+    sa.sa_handler = SIGSEGV_handler;
+    sa.sa_flags = SA_SIGINFO;
+    if (sigaction(SIGSEGV, &sa, NULL) < 0) {
+        fprintf(fp, "Setting up handler failed: sigaction");
+        exit(-1);
+    }
+
+    /* Unblock all signals */
+    sigfillset(&signal_set);
+    if (sigprocmask(SIG_UNBLOCK, &signal_set, NULL) < 0) {
+        fprintf(fp, "Setting up handler failed: sigprocmask");
+        exit(-1);
+    }
+}
+
+void SIGSEGV_handler(int sig) {
+    siglongjmp(jump_to, 1);
 }
